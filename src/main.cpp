@@ -85,6 +85,14 @@ void setup()
 
 void loop()
 {
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    initWifi(WIFI_SSID, WIFI_PASSWD); // 尝试重连WiFi
+  }
+  if (!ESP8266_MQTT.connected())
+  {
+    mqttconnect(); // 尝试重连MQTT
+  }
   httpServer.handleClient();
   static unsigned long InlastActionTime = 0;  // 内部动作时间
   static unsigned long OutlastActionTime = 0; // 外部人体动作时间
