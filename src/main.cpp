@@ -7,21 +7,21 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPUpdateServer.h>
 
-#define Debug 0 // 1:开启调试模式 0:关闭调试模式
+#define Debug
 
 /*Wifi名称和密码*/
 #define WIFI_SSID "ZHC_Web"
 #define WIFI_PASSWD "580231580231"
 
 /*静态IP配置*/
-IPAddress local_IP(192, 168, 1, 111);
-IPAddress gateway(192, 168, 1, 1);
+IPAddress local_IP(192, 168, 22, 111);
+IPAddress gateway(192, 168, 22, 1);
 IPAddress subnet(255, 255, 255, 0);
 IPAddress primaryDNS(10, 10, 10, 10);   // 可选
 IPAddress secondaryDNS(10, 16, 16, 16); // 可选
 
 /*MQQT服务器设置*/
-#define mqtt_server "47.94.7.69"         // EMQX服务器的域名
+#define mqtt_server "www.zhcmqtt.top"    // EMQX服务器的域名
 #define publish_topic "3D_client/sub"    // 发布消息主题
 #define subscribe_topic "Wechat/pub"     // 订阅消息主题
 #define subscribe_topicb "HA/3D_Control" // 订阅消息主题
@@ -72,7 +72,7 @@ void setup()
   ESP8266_MQTT.setCallback(callback); // 设置回调监听云端下发的指令
   httpUpdater.setup(&httpServer);     // 开启HTTP OTA升级
   httpServer.begin();
-#if Debug
+#ifndef Debug
   Serial.print("HTTPUpdateServer ready! Open http://");
   Serial.print(WiFi.localIP());
   Serial.println("/update in your browser");
@@ -183,12 +183,12 @@ void initWifi(const char *ssid, const char *password)
 {
   if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS))
   {
-#if Debug
+#ifndef Debug
     Serial.println("STA 配置静态IP失败");
 #endif
   }
   WiFi.begin(ssid, password);
-#if Debug
+#ifndef Debug
   while (WiFi.status() != WL_CONNECTED)
   {
     Serial.println("WiFi does not connect, try again ...");
@@ -227,7 +227,7 @@ void mqttPub()
   char jsonBuf[192]; // 存放payload主题内容
   sprintf(jsonBuf, rootJson().c_str());
   ESP8266_MQTT.publish(publish_topic, jsonBuf);
-#if Debug
+#ifndef Debug
   Serial.println("发布主题: ");
   Serial.println(publish_topic);
   Serial.println("发布主题消息内容: ");
@@ -245,7 +245,7 @@ void mqttSub()
 /*监听云端下发的指令*/
 void callback(char *topic, byte *payload, unsigned int length)
 {
-#if Debug
+#ifndef Debug
   Serial.print("订阅主题: ");
   Serial.println(topic);
 #endif
@@ -254,7 +254,7 @@ void callback(char *topic, byte *payload, unsigned int length)
   {
     message += (char)payload[i]; // convert *byte to string
   }
-#if Debug
+#ifndef Debug
   Serial.print("订阅主题消息内容: ");
   Serial.println(message);
 #endif
