@@ -6,19 +6,9 @@
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPUpdateServer.h>
+#include "config.h"
 
 #define Debug
-
-/*Wifi名称和密码*/
-#define WIFI_SSID "ZHC_Web"
-#define WIFI_PASSWD "580231580231"
-
-/*静态IP配置*/
-IPAddress local_IP(192, 168, 22, 111);
-IPAddress gateway(192, 168, 22, 1);
-IPAddress subnet(255, 255, 255, 0);
-IPAddress primaryDNS(10, 10, 10, 10);   // 可选
-IPAddress secondaryDNS(10, 16, 16, 16); // 可选
 
 /*MQQT服务器设置*/
 #define mqtt_server "www.zhcmqtt.top"    // EMQX服务器的域名

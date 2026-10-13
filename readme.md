@@ -171,16 +171,14 @@ UP主为了给拓竹P1S 3D打印机解决多色打印卡料问题，DIY了一个
 
 ### 配置修改
 
-编辑 `src/main.cpp`，修改以下配置：
+复制 `include/config.example.h` 为 `include/config.h`，再填写本机网络。`include/config.h` 已在 `.gitignore` 中，不会进入仓库。
 
 ```cpp
-// WiFi配置
 #define WIFI_SSID "你的WiFi名称"
 #define WIFI_PASSWD "你的WiFi密码"
 
-// 静态IP配置（可选）
-IPAddress local_IP(192, 168, 22, 111);
-IPAddress gateway(192, 168, 22, 1);
+IPAddress local_IP(192, 168, 1, 111);
+IPAddress gateway(192, 168, 1, 1);
 ```
 
 ### 编译上传
