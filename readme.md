@@ -1,266 +1,167 @@
-# 给拓竹 P1S 垫高一层，再教它自己开灯
-
-> 这是我的第一个 DIY 作品。为了给拓竹 P1S 接上 AMS、解决料盘卡料，我搜了一圈，没有找到完全满足要求的现成产品，于是自己画模型、3D 打印，做了一个会看人、会看打印动作、也能远程控制的智控增高架。本文沿着脑图、四根 GPIO 和装配过程讲起，对照早期视频与当前公开固件，拆开灯带计时、MQTT 控制和网页升级，并说明风扇与复刻资料还缺哪些部分。
-
-<!-- wemedia:entry:opening:start -->
-
-**本文资料 · 接着动手**
-
-**鸿尘客独立站**
-
-点击下方获取本文**开源资料**与**配套内容**  
-[开源资料：https://zhcmqtt.top/article/print-led](https://zhcmqtt.top/article/print-led)
-
-[![官网](https://image-osb.obs.cn-east-3.myhuaweicloud.com/wemedia/honchic_logo.webp)](https://zhcmqtt.top/)
-
-<!-- wemedia:entry:opening:end -->
-
-鸿尘客 Honchic · 机器人开发 · 2023-12-13
-
-<!-- wemedia:body:start -->
-
-这是我的第一个 DIY 作品，算是开端。
-
-当时脑子里突然冒出一个想法：拓竹的 AMS 要装到 P1S 上，料盘卡料的问题也一直挂着，能不能给打印机垫一层架子，顺便把它变得更好用一点？
-
-想法有了，我先去搜现成的产品。搜来搜去，没有一款完全满足我的要求，那就自己动手。
-
-我的要求是自己一条条理出来的：架子要能承重，要能封箱打印，四周要有灯，要能联网远程控制，还要能靠红外感知人和打印动作。这些后来都写进了脑图里。
-
-![演示视频截图：AMS 装上 P1S 之后，下面那一层增高架的环绕灯带亮着](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/001.webp)
-
-增高架本来是件很朴素的东西。垫高一层，扛住上面的重量，任务就算完成了。
-
-可这一层空间都腾出来了，不往里塞点东西，总觉得有点亏。
-
-于是它多了一圈灯带、两个红外检测模块和一块 ESP-01S。走过去看打印进度，灯自己亮；打印结束，过一会儿自己灭；人不在旁边，也能从手机上给它下指令。
-
-一层垫子，就这样变成了打印机的小中控。
-
-![示意图：从冒出想法、搜现成产品，到理需求画脑图、建模打印、接线调试和装机测试](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/002.webp)
-
-## 先在脑图里把账算清楚
-
-动手之前，我先开了一张脑图，把这件事拆成功能、硬件、软件三支。视频里能看到，它是一点点长出来的：起初只有三个空分支，后来才填进增高架、人体检测和云端控制。
-
-![演示视频截图：「3D 打印智控」脑图，硬件清单和五条控制规则都列在上面](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/003.webp)
-
-功能这一支写得很贪心。增高架要承重，要能封箱打印，前后装风扇，四周再绕一圈灯带做顶部照明。电控部分另加三样，人体检测、打印任务检测，还有云端联网控制。
-
-硬件清单倒是不长：
-
-| 部件               | 在这里干什么                                 |
-| ------------------ | -------------------------------------------- |
-| ESP-01S 继电器模块 | 主控，负责联网，用继电器开关灯带             |
-| 红外检测模块 ×2    | 一个看机外有没有人，一个看机内有没有打印动作 |
-| COB 灯带           | 环绕增高架一圈，做顶部照明                   |
-| 静音风扇 ×6        | 前后通风，为封箱打印准备                     |
-| USB 转端子线       | 取电接线                                     |
-| 自锁 LED 按钮      | 风扇总控开关                                 |
-
-主控选 ESP-01S，理由也写在制作流程里：利用它的四个小端口，同时完成外部人体检测和内部打印动作检测。整块模块能拿来干活的 GPIO 就四根，要接一路继电器、两路红外，还想给风扇留个位置。
-
-四个小端口，极限压榨。
-
-## 四根 GPIO，一根不剩
-
-当前仓库的固件里，四根引脚是这样分的：
-
-| 引脚        | GPIO  | 用途                          |
-| ----------- | ----- | ----------------------------- |
-| `RelayPIN`  | GPIO2 | 继电器，开关灯带              |
-| `Relay2PIN` | GPIO0 | 预留的第二路继电器            |
-| `TXDPIN`    | GPIO1 | 机内红外检测，占用串口 TX     |
-| `RXDPIN`    | GPIO3 | 机外人体红外检测，占用串口 RX |
-
-灯带继电器按低电平开、高电平关来控制，固件运行起来后会先拉低 GPIO2，让灯亮起来。复刻时要先核对自己手上模块的触发电平。
-
-ESP-01S 的这几根脚，每根都有自己的本职工作。
-
-![示意图：ESP-01S 四根 GPIO 各接什么，以及它们原本的启动和串口职责](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/004.webp)
-
-GPIO0 和 GPIO2 跟启动有关。上电那一刻，它们的电平参与决定芯片怎么启动，正常从 Flash 运行，需要两根都是高电平；GPIO0 被拉低，芯片就进了下载模式，乖乖等人烧录。
-
-GPIO1 和 GPIO3 原本是串口的 TX、RX，烧录固件、打印日志都走它们。拿来读红外，串口调试就得让一让路。视频里的代码用 `Debug` 开关控制部分串口打印。当前仓库只屏蔽了部分调试日志，仍会初始化串口、输出连接信息，不能把这个开关当成串口已经彻底空出来。
-
-复刻时可以记两件小事。烧录或者看串口日志前，先把接在 GPIO1、GPIO3 上的红外模块断开，免得它们和串口抢线。接在 GPIO0、GPIO2 上的模块，也要确认上电时不会把引脚拉低，否则板子可能卡在启动阶段，看起来像是坏了，其实只是没起来。
-
-第二路继电器留在 GPIO0。视频里风扇还没装，电路图先把端口留了出来。
-
-![演示视频截图：电路图画好，风扇暂时不装，端口先预留](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/005.webp)
-
-## 灯什么时候亮，听谁的
-
-一圈灯带，一个继电器，听起来很简单。麻烦的是规矩。什么时候该亮，什么时候该灭，几路信号一起来了，到底听谁的。
-
-脑图里的软件那一支，我先写了五条设计规则。灯带和红外先做起来，风扇那两条留给后面的安装与控制补齐：
-
-1. 云端下发指令时，自动检测全部停下。
-2. 有打印任务时，灯带自动打开，打印完成后延时关闭。
-3. 没有任务时，灯带默认关着，感应到有人才亮，延时后自动关闭。
-4. 自锁按钮打开后，风扇才加入自动检测，否则风扇全关。
-5. 风扇加入后，有任务时自动开启，打印完成后自动关闭。
-
-第一条放在最前面。如果手机上点了「开」，灯却因为没检测到人又自己灭掉，云端那一下就白点了。这张脑图和下面的示意图，画的是我想要的控制顺序。
-
-当前固件的接管方式还要分开、关来看。收到 `on` 后，灯持续亮着，自动检测暂停；收到 `off` 后，灯先关闭，同时恢复自动检测。随后红外再次触发，灯仍可能亮起来。**远程关灯不会一直锁住关闭状态。**
-
-脑图里「没任务时默认关灯」也是目标规则。当前代码上电先亮灯，再进入检测和计时逻辑，启动时的表现要分开看。
-
-两个红外的分工很明确。机外那个看人，有人走近就亮灯。机内那个看打印动作，里面一直在动，就当作有任务在跑。
-
-![设计规则示意图：云端控制优先、红外自动检测让位；具体开关行为以正文中的固件说明为准](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/006.webp)
-
-它没有去读打印机的任务状态，靠的是机内那个红外模块。代价是它只认动作，两次动作之间隔得久一点，它分不清机器是在歇口气还是真的打完了。关灯前留一段延时，就是给这种间隙留的余量。
-
-延时多长，脑图里一开始写的是 10 秒，后来改成了「XX 秒」，留给调试再定。视频里的早期版本写得很直接，检测到信号就拉继电器，`delay(10000)` 等上 10 秒，再切回去。
-
-![演示视频截图：loop() 里的机外人体检测和机内任务检测，用 delay(10000) 做延时](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/007.webp)
-
-`delay()` 写起来省事，代价是整个循环在这 10 秒里停住。早期版本把 MQTT 消息处理排在检测后面，这段时间轮不上它，云端发来的指令只能等着；两路检测接连触发，等待还会叠加。
-
-**当前仓库已经把这两段长等待改成了 `millis()` 计时。** 每一圈记下现在的时间，再跟上一次动作的时间比较，主循环继续往下跑。
-
-| 当前固件的检测逻辑                         | 动作与等待条件                     |
-| ------------------------------------------ | ---------------------------------- |
-| 机内红外有动作                             | 开灯，刷新机内计时，并清空机外计时 |
-| 机内最后一次动作后满 30 秒                 | 才进入机外人体检测与关灯判断       |
-| 机外红外有动作                             | 开灯，刷新机外计时                 |
-| 已进入机外判断，机外最后一次动作后满 20 秒 | 关灯；若机外从未触发，也关灯       |
-
-这两个时间是代码中实际比较的数值，不是简单把 30 秒和 20 秒相加。两路检测还各留了 50 毫秒的消抖等待，所以它去掉了原先的 10 秒阻塞，但还没有完全消除短暂停顿。
-
-## 从一块板子，到一层架子
-
-规矩定好，下面就是动手开干。
-
-先建模。板子上阵列了一排长条通风槽，一格一格排得整整齐齐。
-
-![演示视频截图：建模软件里给板件阵列出一排长条通风槽](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/008.webp)
-
-模型画完，零件交给 P1S 自己打。打印机给自己打增高垫，这活儿它干得倒是一点不含糊。
-
-![演示视频截图：P1S 正在打印增高架的零件](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/009.webp)
-
-然后是代码框架和电路图。再然后，就是接线、调试、接线、调试。
-
-灯带沿着增高架内圈贴了一整圈，装回打印机上点亮，打印区域一下子亮堂了。
-
-![演示视频截图：增高架装回 P1S，内圈的灯带点亮](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/010.webp)
-
-ESP-01S 继电器模块这个小中控，我给它做了个磁吸架，藏在打印机侧边。
-
-![演示视频截图：ESP-01S 继电器模块装上磁吸架，藏在打印机侧边](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/011.webp)
-
-视频里，装好后又测了一轮。机外检测正常，机内检测正常，云端控制也正常。
-
-## 云端那一路
-
-视频里录的这一版，云端接的是阿里云物联网平台。
-
-代码按平台规则拼出属性主题，设备订阅 `/sys/{PRODUCT_KEY}/{DEVICE_NAME}/thing/service/property/set`。消息到了，先用 ArduinoJson 解析，再从 `params` 里取出开关状态，写给继电器。上报用的 `.../thing/event/property/post` 主题也一并定义好了。
-
-测试时，我在手机上打开物联网平台的调试页，找到「智能灯开关」，点一下设置，灯带就跟着亮了。
-
-![演示视频截图：手机打开物联网平台的调试页，给「智能灯开关」下发指令](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/012.webp)
-
-视频记录的是早期阿里云版本。后来代码接入了自建 MQTT、微信小程序和 Home Assistant，现在公开的 `DIY_3DPrint_Parts` 仓库保存的是这一版。两条链路分开看，视频中的阿里云主题不能直接拿来控制当前固件。
-
-自建 MQTT 版的客户端 ID 是 `3D_Print`，主题也重新起了名字：
-
-| 主题            | 方向     | 内容                      |
-| --------------- | -------- | ------------------------- |
-| `3D_client/sub` | 设备发布 | 上报继电器状态            |
-| `Wechat/pub`    | 设备订阅 | 微信小程序的控制指令      |
-| `HA/3D_Control` | 设备订阅 | Home Assistant 的控制指令 |
-
-固件每 5 秒上报一次继电器状态。灯开着时，数据长这样：
+<p align="center">
+  <img src="https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/cover/cover-wechat-b04496e1ff55.webp" alt="深色封面：左侧是带彩色料盘的打印机和正在走近的人，右侧大字是竹子智控增高架，下面三枚标签为多色打印、任务检测、人体检测" width="100%">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/ESP8266-111111?style=flat-square&logo=espressif&logoColor=white" alt="ESP8266">
+  <img src="https://img.shields.io/badge/C%2B%2B-111111?style=flat-square&logo=cplusplus&logoColor=white" alt="C++">
+  <img src="https://img.shields.io/badge/Arduino-111111?style=flat-square&logo=arduino&logoColor=white" alt="Arduino">
+  <img src="https://img.shields.io/badge/PlatformIO-111111?style=flat-square&logo=platformio&logoColor=white" alt="PlatformIO">
+  <img src="https://img.shields.io/badge/ArduinoJson-7-111111?style=flat-square" alt="ArduinoJson 7">
+</p>
+
+<p align="center">
+  <b>拓竹 P1S 增高架的灯带控制固件。</b><br>
+  换上自己的 Wi-Fi、静态 IP 和 MQTT 服务器，烧进 ESP-01，灯带会按机内动作和机外人体自动开关，也能远程控制。
+</p>
+
+<p align="center">
+  <a href="#功能">功能</a> ·
+  <a href="#跑起来">跑起来</a> ·
+  <a href="#改成你的">改成你的</a> ·
+  <a href="#目录">目录</a> ·
+  <a href="#遇到问题时">遇到问题时</a> ·
+  <a href="#交流与贡献">交流与贡献</a>
+</p>
+
+## 这是什么
+
+这个仓库是拓竹 P1S 智控增高架的灯带固件，给已经接好 ESP-01、继电器和两路红外的人编译上传。板型是 PlatformIO 的 `esp01_1m`。
+
+仓库交付的是固件工程：控制逻辑在 `src/main.cpp`，Wi-Fi 示例在 `include/config.example.h`。用 PlatformIO 编译，通过串口烧进模块。固件驱动灯带继电器。GPIO0 目前只定义了常量 `Relay2PIN`。
+
+配套的制作说明放在文末资料入口。
+
+## 功能
+
+继电器接在 GPIO2。`State` 为 0 时引脚拉低，灯带打开；为 1 时引脚拉高，灯带关闭。上电后会先打开灯带。
+
+| 能力 | 结果 |
+| --- | --- |
+| **机内动作** | GPIO1 连续读到高电平就开灯，并刷新机内计时 |
+| **延时后再看人** | 机内连续 30 秒没有高电平之后，才读取 GPIO3 |
+| **机外人体** | 此时 GPIO3 为高就开灯；从未触发过机外检测则关灯 |
+| **人离开** | 机外最后一次高电平后再过 20 秒，关灯 |
+| **远程开灯** | 指令为 `on` 时灯保持打开，自动检测暂停 |
+| **远程关灯** | 指令为 `off` 时灯关闭，并立刻回到自动检测 |
+| **状态上报** | 每 5 秒向 `3D_client/sub` 发布一则 JSON |
+| **网页升级** | 浏览器打开 `http://设备IP/update`，上传新固件 |
+| **定时重启** | 连续运行满 48 小时后调用 `ESP.restart()` |
+
+两路红外都先等 50 毫秒再读一次，用来避开毛刺。GPIO1、GPIO3 分别是串口的 TX、RX，检测期间串口日志和烧录会和模块抢这两根线。
+
+远程指令有两种格式。
+
+微信小程序主题 `Wechat/pub` 接收 JSON。`info.name` 需要是 `Wechat`，`equipment.switch1` 为 `on` 或 `off`：
 
 ```json
-{
-  "info": { "name": "3D_Print" },
-  "param": { "relay_pin": "on" }
-}
+{"info":{"name":"Wechat"},"equipment":{"switch1":"on"}}
 ```
 
-关灯时，`relay_pin` 的值换成 `off`。这个值来自 GPIO2 的电平，表示控制输出的状态，不是灯带是否真的发光，也不是打印机的任务状态。
+Home Assistant 主题 `HA/3D_Control` 接收纯文本：`on` 开灯，其他内容关灯。
 
-小程序控制使用 `info.name` 和 `equipment.switch1`。一条开灯消息可以这样写：
+上报内容里，`info.name` 固定为 `3D_Print`。`param.relay_pin` 按 GPIO2 的电平填写：低电平是 `on`，高电平是 `off`。
 
 ```json
-{
-  "info": { "name": "Wechat" },
-  "equipment": { "switch1": "on" }
-}
+{"info":{"name":"3D_Print"},"param":{"relay_pin":"on"}}
 ```
 
-关灯时把 `switch1` 改为 `off`。协议里也留了 `info.time`，但当前代码没有用它判断消息先后或重复。Home Assistant 那一路更省事，消息体直接发 `on` 或 `off`。两个入口的格式不同，发错主题或消息结构，不能指望设备猜出你的意思。
+## 跑起来
 
-![示意图：视频版经阿里云物联网平台、文档版经自建 MQTT 服务器的两条云端控制链路](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/013.webp)
+需要本机已安装 [PlatformIO](https://platformio.org/)。`platformio.ini` 使用 `espressif8266` 平台和 Arduino 框架，平台版本由 PlatformIO 在编译时解析。库依赖是 ArduinoJson `^7.0.3` 和 PubSubClient `^2.8`。用 VS Code 打开仓库时，按提示安装扩展 `platformio.platformio-ide`。
 
-这份代码用 PlatformIO 管理，`platformio.ini` 定义 `esp01_1m` 环境和 Arduino 框架，库依赖约束为 ArduinoJson `^7.0.3`、PubSubClient `^2.8`。具体控制逻辑集中在 `src/main.cpp`。
+```bash
+git clone https://github.com/zhanghongchen1213/DIY_3DPrint_Parts.git
+cd DIY_3DPrint_Parts
+cp include/config.example.h include/config.h
+```
 
-Wi-Fi 与 MQTT 服务配置也写在这个文件里。当前代码会调用 `WiFi.config(...)` 使用静态 IP，换网络时要一起检查设备 IP、网关、子网和 DNS，不能只改 Wi-Fi 名称与密码。
-
-代码还接入了 `ESP8266WebServer` 和网页 HTTP OTA，默认升级入口在设备本地 IP 下的 `/update`。先通过串口烧好固件、让设备连入局域网，再从浏览器上传新的固件文件，才有机会少拆一次藏在侧边的小盒子。
-
-MQTT 连接使用 1883 明文端口，当前 `connect()` 调用只传客户端 ID，没有传用户名和密码；网页升级也没有设置登录凭据。复刻时要改成自己的配置，认证需要补进连接代码，不能只在服务端设密码。
-
-网络部分还写了断线重连和约 48 小时自动重启。这里也留着需要继续打磨的地方：MQTT 重连会反复等待 broker，连不上时后面的检测和网页服务也会等；控制主题只在启动时订阅，重连后还需要重新订阅。定时重启接上了，长期稳定性仍要靠设备运行来检验。
-
-## 想先把固件跑起来
-
-可以先从灯带和两路检测开始，把最小的一圈接通，再考虑风扇。当前公开仓库收录了电控固件，增高架模型、电路源文件和完整物料规格还没有放进去；文章里的部件表和视频截图能帮助理解，但还不是一套完整的复刻资料。仓库也未附许可证，使用范围需要另行明确。
-
-1. 用 PlatformIO 打开仓库根目录，选 `esp01_1m` 环境。
-2. 在 `src/main.cpp` 中换成自己的网络与 MQTT 配置，再核对继电器触发电平和两路传感器的信号。
-3. 编译后用自己的串口烧录器首次上传。烧录时断开 GPIO1、GPIO3 上的红外模块，按 ESP-01S 的下载模式连接 GPIO0，烧录后再恢复正常启动接线。
-4. 分别验证机内动作、机外人体检测、MQTT 开关与恢复自动的行为，再试设备本地的 `/update` 页面。先确认灯带控制符合预期，再继续扩展。
-
-工程的编译与串口上传命令是：
+`src/main.cpp` 会包含 `config.h`。这个文件被 `.gitignore` 忽略，缺了它编译会停在包含这一步。填好 Wi-Fi、静态 IP 和 MQTT 服务器后，在仓库根目录执行：
 
 ```bash
 pio run -e esp01_1m
 pio run -e esp01_1m --target upload
 ```
 
-串口上传还需要实际烧录器、供电和正确的下载模式接线。这两行命令不会替你把线接好。
+环境名是 `esp01_1m`。`platformio.ini` 把 `upload_resetmethod` 设为 `nodemcu`。上传端口按本机串口适配器指定。串口日志波特率是 `9600`，对应 `Serial.begin(9600)`。
 
-## 风扇的位置，先空着
+烧录时让模块进入下载模式。接在 GPIO1、GPIO3 上的红外模块先断开，避免和下载串口抢线。上传完成后接回模块，再看灯带和远程指令。
 
-六个静音风扇和那颗自锁按钮，是为夏天准备的。脑图里写着「夏天就可以愉快的封箱打印 PLA 材料啦」，风扇就是为这一句准备的。
+## 改成你的
 
-视频里，风扇这一路还没装。位置、端口和设计规则先留着，当前固件也仅声明了 GPIO0 这根预留脚，没有初始化风扇输出，更没有自锁按钮和风扇的控制逻辑。后面要补的是供电、接线和代码，不只是把六个风扇拧上去。
+示例里的地址属于 `192.168.1.0/24`。设备用静态 IP 入网，地址、网关和子网要改成你自己局域网里的值。
 
-脑洞先落地，细节慢慢打磨。增高架里的位置，先给它留着。
+| 要改的内容 | 文件与当前值 |
+| --- | --- |
+| Wi-Fi 名称、密码 | `include/config.h` 的 `WIFI_SSID`、`WIFI_PASSWD`；示例写成 `你的WiFi名称`、`你的WiFi密码` |
+| 静态 IP | 同文件的 `local_IP(192, 168, 1, 111)` |
+| 网关、子网、DNS | `gateway(192, 168, 1, 1)`、`subnet(255, 255, 255, 0)`、`primaryDNS(192, 168, 1, 1)`、`secondaryDNS(8, 8, 8, 8)` |
+| MQTT 服务器 | `src/main.cpp` 的 `mqtt_server`，当前是 `www.zhcmqtt.top`，端口 `1883` |
+| 客户端 ID | 同文件的 `User_ID`，当前是 `3D_Print`；同一服务器上每台设备使用不同 ID |
+| 三个主题 | `publish_topic` 为 `3D_client/sub`，`subscribe_topic` 为 `Wechat/pub`，`subscribe_topicb` 为 `HA/3D_Control` |
 
-AMS 最后稳稳坐了上去。我用它打了一块多色的磁吸封箱板，吸在正面，顺手把多色打印也测了一遍。
+MQTT 连接只提交客户端 ID。网页升级页在浏览器里直接打开。服务器和升级页放在你自己的网络里。
 
-![演示视频截图：多色磁吸封箱板吸在正面，上方的 AMS 和灯带亮着](https://image-osb.obs.cn-east-3.myhuaweicloud.com/blog/2023-12-13/print-led/r01/014.webp)
+改完后重新上传。串口出现 `MQTT connected` 后，用浏览器打开 `http://` 加上你写入的静态 IP，再加 `/update`。示例地址对应 `http://192.168.1.111/update`。
 
-一开始，只是想给 AMS 垫高一层。
+## 目录
 
-现在这一层会看人，会看打印机，也听手机的话。走过去，灯亮了。走开一会儿，它自己熄掉。
+```text
+.
+├── include/config.example.h
+├── src/main.cpp
+├── platformio.ini
+└── .vscode/extensions.json
+```
 
-灯先亮起来了，风扇的位置还给下一步留着。
+| 入口 | 位置 |
+| --- | --- |
+| Wi-Fi 与静态 IP | `include/config.h`，由示例文件复制，不进入版本库 |
+| 引脚、MQTT 与灯控 | `src/main.cpp` |
+| 板型、上传方式和库版本 | `platformio.ini` 的环境 `esp01_1m` |
+| 状态上报 | 主题 `3D_client/sub` |
+| 小程序指令 | 主题 `Wechat/pub` |
+| Home Assistant 指令 | 主题 `HA/3D_Control` |
+| 固件升级页 | `http://设备IP/update` |
 
-<!-- wemedia:body:end -->
+引脚常量：`RelayPIN` 是 GPIO2，`TXDPIN` 是 GPIO1，`RXDPIN` 是 GPIO3，`Relay2PIN` 是 GPIO0。
 
-鸿尘客 Honchic · 把脑洞焊到电路板上
+## 遇到问题时
 
-<!-- wemedia:entry:closing:start -->
+| 现象 | 先检查 |
+| --- | --- |
+| 串口反复打印 `Connecting to MQTT...`，浏览器打不开升级页 | `config.h` 的 Wi-Fi 和静态 IP，以及 `mqtt_server` 的 1883 端口。`mqttconnect()` 在连上之前不会返回，升级页要等这一步结束才启动 |
+| 断线恢复后，远程指令没有反应 | 重连时只调用了 `mqttconnect()`，没有再次调用 `mqttSub()` |
+| 刚发了关闭，灯又亮了 | 收到 `off` 后会清除云端控制标志。GPIO1 或 GPIO3 仍为高电平时，自动检测会再次开灯 |
+| 上传失败，或上电后一直停在下载模式 | 上电时 GPIO0 为低会进入下载。烧录前断开 GPIO1、GPIO3 上的红外模块 |
 
----
+源码里定义了 `Debug`。Wi-Fi 等待循环写在 `#ifndef Debug` 中，所以当前编译结果不会在 `setup()` 里空等网络。连接结果以串口上的 MQTT 文本为准。
+
+## 交流与贡献
+
+部署和使用时遇到问题，可以到 [Issues](https://github.com/zhanghongchen1213/DIY_3DPrint_Parts/issues) 提问。用这套源码做出自己的成果后，也欢迎在 Issue 里留下地址。
+
+发现 Bug 或有明确的改动建议，请 [提交 Issue](https://github.com/zhanghongchen1213/DIY_3DPrint_Parts/issues/new)。本仓库没有单独的贡献说明和安全政策，改代码前先用 Issue 说明改动范围。不要在公开 Issue 里贴密钥、令牌或环境变量文件。
 
 **本文资料 · 接着动手**
+
+**鸿尘客公众号**  
+扫码关注鸿尘客公众号，回复 **“查看原文”**，获取本文开源资料与配套内容。
+
+![鸿尘客公众号二维码](https://image-osb.obs.cn-east-3.myhuaweicloud.com/wemedia/wxlogo.webp)
 
 **鸿尘客独立站**
 
 点击下方获取本文**开源资料**与**配套内容**  
 [开源资料：https://zhcmqtt.top/article/print-led](https://zhcmqtt.top/article/print-led)
 
-[![官网](https://image-osb.obs.cn-east-3.myhuaweicloud.com/wemedia/honchic_logo.webp)](https://zhcmqtt.top/)
+![官网](https://image-osb.obs.cn-east-3.myhuaweicloud.com/wemedia/honchic_logo.webp)
 
----
+## 许可
 
-<!-- wemedia:entry:closing:end -->
+本仓库以 **MIT License** 授权。SPDX 标识符为 `MIT`，版权人是鸿尘客（Honchic），版权年份为 2024。具有法律效力的许可全文在仓库根目录的 [LICENSE](LICENSE)。
+
+在所有副本或实质性部分中保留上述版权声明和许可声明的前提下，可以免费使用、复制、修改、合并、发布、分发、再许可或销售本软件及其配套文档。软件按「原样」提供，不包含适销性、特定用途适用性、不侵权等任何明示或暗示担保。作者与版权人不对因使用或无法使用本软件引起的索赔、损害或其他责任负责。
+
+本授权覆盖本仓库中的源代码、配置、脚本和文档。第三方依赖保留各自许可证，不因本仓库采用 MIT 而改变。
