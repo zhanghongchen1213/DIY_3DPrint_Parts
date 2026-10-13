@@ -45,6 +45,9 @@ PubSubClient ESP8266_MQTT(ESP8266_Client);
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
 
+unsigned long lastRestartTime = 0;                         // 上次重启时间
+const unsigned long restartInterval = 48 * 60 * 60 * 1000; // 重启间隔，2天重启一次
+
 /*函数定义*/
 void initWifi(const char *ssid, const char *password);
 void callback(char *topic, byte *payload, unsigned int length);
@@ -55,6 +58,7 @@ void parseInfo(String message);
 String rootJson();
 uint8_t KEY_IN(void);
 uint8_t KEY_OUT(void);
+void loopTask();
 
 void setup()
 {
@@ -85,15 +89,8 @@ void setup()
 
 void loop()
 {
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    initWifi(WIFI_SSID, WIFI_PASSWD); // 尝试重连WiFi
-  }
-  if (!ESP8266_MQTT.connected())
-  {
-    mqttconnect(); // 尝试重连MQTT
-  }
-  httpServer.handleClient();
+  loopTask(); // 循环检测任务
+  // 自动检测逻辑处理
   static unsigned long InlastActionTime = 0;  // 内部动作时间
   static unsigned long OutlastActionTime = 0; // 外部人体动作时间
   unsigned long currentTime = millis();
@@ -321,4 +318,28 @@ String rootJson()
   String jsonCode;
   serializeJson(doc, jsonCode);
   return jsonCode;
+}
+
+/*循环检测任务*/
+void loopTask()
+{
+  // 检查是否断网，断网重连
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    initWifi(WIFI_SSID, WIFI_PASSWD); // 尝试重连WiFi
+  }
+  // 检查是否断开MQTT，断开重连
+  if (!ESP8266_MQTT.connected())
+  {
+    mqttconnect(); // 尝试重连MQTT
+  }
+  // 检查是否到达重启时间，2天重启一次，清空内存
+  unsigned long currentTime = millis();
+  if (currentTime - lastRestartTime >= restartInterval || currentTime < lastRestartTime)
+  {
+    Serial.println("Restarting...");
+    ESP.restart();
+  }
+  // OTA升级
+  httpServer.handleClient();
 }
